@@ -75,7 +75,7 @@ with st.sidebar:
 
     model_option = st.selectbox(
         "모델 선택",
-        ("llama-3.3-70b-versatile", "mixtral-8x7b-32768"),
+        ("llama-3.3-70b-versatile", "llama-3.1-8b-instant", "qwen/qwen3-32b","meta-llama/llama-4-maverick-17b-128e-instruct"),
         index=0
     )
     st.info("이 앱은 **서버에 저장된 공용 Groq API 키**로 동작하며, 사용자는 키를 입력할 필요가 없습니다.")
@@ -163,4 +163,5 @@ for message in st.session_state.messages:
             # 마커가 없으면 전체를 코드블록으로
             block = strip_blockquote_prefix(content)
             st.code(block, language="markdown")
+
 
