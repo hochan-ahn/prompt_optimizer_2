@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 from groq import Groq
 
@@ -44,9 +45,23 @@ SYSTEM_PROMPT = """
 ---
 """
 
+# Blockquote 제거 유틸 (코드블록 출력 시 '>' 접두어 제거)
+def strip_blockquote_prefix(text: str) -> str:
+    lines = text.splitlines()
+    cleaned = []
+    for line in lines:
+        if line.startswith("> "):
+            cleaned.append(line[2:])
+        elif line.startswith(">"):
+            cleaned.append(line[1:])
+        else:
+            cleaned.append(line)
+    return "\n".join(cleaned)
+
+
 # --- 2. 페이지 기본 설정 ---
 st.set_page_config(
-    page_title="프롬프트 최적화 봇 (Gemma 3)",
+    page_title="프롬프트 최적화 봇 (Groq)",
     page_icon="✨",
     layout="wide"
 )
@@ -54,83 +69,97 @@ st.set_page_config(
 st.title("✨ 프롬프트 엔지니어링 봇 (Powered by Groq)")
 st.markdown("대충 적은 프롬프트를 입력하면, **고성능 프롬프트 템플릿**으로 업그레이드해 드립니다.")
 
-# --- 3. 사이드바: 설정 및 API 키 입력 (BYOK 방식) ---
+# --- 3. 서버에만 API 키를 두고, 모든 사용자가 공용으로 사용 ---
 with st.sidebar:
     st.header("⚙️ 설정")
-    groq_api_key = st.text_input("Groq API Key 입력", type="password", help="[https://console.groq.com/keys](https://console.groq.com/keys) 에서 무료 발급 가능")
-    
-    # 모델 선택 (Gemma 3가 아직 목록에 없다면 gemma2-9b-it 사용 권장)
+
     model_option = st.selectbox(
         "모델 선택",
         ("gemma2-9b-it", "llama-3.3-70b-versatile", "mixtral-8x7b-32768"),
         index=0
     )
-    st.info(f"선택된 모델: `{model_option}`\n\n(참고: Gemma 3가 Groq에 업데이트되면 코드 내 모델명을 변경하세요.)")
-    
-    st.markdown("---")
-    st.markdown("### 💡 사용 팁")
-    st.markdown("1. 만들고 싶은 기능을 대충 설명하세요.")
-    st.markdown("2. 예: *'블로그 글 쓰는 봇 만들어줘'*, *'영어 이메일 교정해줘'*")
+    st.info("이 앱은 **서버에 저장된 공용 Groq API 키**로 동작하며, 사용자는 키를 입력할 필요가 없습니다.")
 
-# --- 4. 메인 로직 ---
+# 서버 측에서만 API 키 로드 (.streamlit/secrets.toml 또는 환경변수)
+groq_api_key = None
+try:
+    groq_api_key = st.secrets["GROQ_API_KEY"]
+except Exception:
+    groq_api_key = os.getenv("GROQ_API_KEY")
 
-# API 키 확인
 if not groq_api_key:
-    st.warning("왼쪽 사이드바에 **Groq API Key**를 입력해야 시작할 수 있습니다.")
+    st.error(
+        "서버에 Groq API Key가 설정되어 있지 않습니다.\n\n"
+        "- `.streamlit/secrets.toml` 에 `GROQ_API_KEY=\"...\"` 를 추가하거나\n"
+        "- OS 환경변수 `GROQ_API_KEY` 를 설정해 주세요.\n\n"
+        "이 설정은 **서버 배포 시 한 번만** 해주면, 이후 모든 사용자가 별도 입력 없이 사용 가능합니다."
+    )
     st.stop()
 
-# 클라이언트 초기화
+# Groq 클라이언트 초기화 (공용 서버 키 사용)
 try:
     client = Groq(api_key=groq_api_key)
 except Exception as e:
     st.error(f"API 연결 오류: {e}")
     st.stop()
 
-# 세션 상태 초기화 (대화 기록)
+# 세션 상태 초기화: 항상 "이번 질답 1세트"만 유지
 if "messages" not in st.session_state:
-    st.session_state["messages"] = [
-        {"role": "system", "content": SYSTEM_PROMPT}
+    st.session_state.messages = []
+
+# 사용자 입력
+user_input = st.chat_input("프롬프트를 입력하세요 (예: 여행 계획 짜주는 봇 만들어줘)")
+
+if user_input:
+    # 새로운 질문이 들어오면 바로 이전 대화/맥락 삭제
+    st.session_state.messages = []
+
+    # 사용자 말풍선
+    with st.chat_message("user"):
+        st.markdown(user_input)
+
+    # Groq로 보낼 메시지 구성 (시스템 + 사용자)
+    payload_messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_input},
     ]
 
-# --- 5. 대화 화면 출력 ---
-# 시스템 메시지는 숨기고, 사용자/어시스턴트 대화만 표시
-for msg in st.session_state.messages:
-    if msg["role"] != "system":
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
-
-# --- 6. 사용자 입력 처리 ---
-if prompt := st.chat_input("프롬프트를 입력하세요 (예: 여행 계획 짜주는 봇 만들어줘)"):
-    # 1) 사용자 메시지 UI 표시 및 저장
-    st.chat_message("user").write(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
-
-    # 2) Groq API 호출 및 스트리밍 응답
-    with st.chat_message("assistant"):
-        message_placeholder = st.empty()
-        full_response = ""
-        
+    with st.spinner("생각 중..."):
         try:
-            stream = client.chat.completions.create(
-                messages=st.session_state.messages,
+            completion = client.chat.completions.create(
                 model=model_option,
-                temperature=0.7, # 창의성 조절
+                messages=payload_messages,
+                temperature=0.7,
                 max_tokens=2048,
-                stream=True,
+                stream=False,
             )
-            
-            # 스트리밍 청크 받아서 실시간 출력
-            for chunk in stream:
-                if chunk.choices[0].delta.content is not None:
-                    content = chunk.choices[0].delta.content
-                    full_response += content
-                    message_placeholder.markdown(full_response + "▌")
-            
-            # 최종 완성본 출력 (커서 제거)
-            message_placeholder.markdown(full_response)
-            
-            # 3) 어시스턴트 메시지 저장
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-            
+            assistant_message = completion.choices[0].message.content
+
+            # 상태에 이번 질답 저장
+            st.session_state.messages.append(
+                {"role": "assistant", "content": assistant_message}
+            )
+
+            # 상태 반영하여 다시 그리기
+            st.rerun()
+
         except Exception as e:
             st.error(f"에러가 발생했습니다: {e}")
+
+# (사용자 입력 이후 rerun 된 화면에서) 질답 1세트만 출력
+for message in st.session_state.messages:
+    with st.chat_message("assistant"):
+        marker = "### ✨ 최적화된 프롬프트"
+        content = message["content"]
+        if marker in content:
+            pre, post = content.split(marker, 1)
+            # 설명 부분이 있으면 마크다운으로 출력
+            if pre.strip():
+                st.markdown(pre)
+            # "최적화된 프롬프트" 이하를 코드블록(마크다운)으로 표시하되 '>' 제거
+            block = strip_blockquote_prefix(f"{marker}{post}")
+            st.code(block, language="markdown")
+        else:
+            # 마커가 없으면 전체를 코드블록으로
+            block = strip_blockquote_prefix(content)
+            st.code(block, language="markdown")
