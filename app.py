@@ -1,123 +1,25 @@
 import streamlit as st
-import google.generativeai as genai
+from groq import Groq
 
-# 페이지 설정
-st.set_page_config(
-    page_title="프롬프트 개선 테스트",
-    page_icon="🤑",
-    layout="wide"
-)
-
-# Blockquote 제거 유틸 (코드블록 출력 시 '>' 접두어 제거)
-def strip_blockquote_prefix(text: str) -> str:
-    lines = text.splitlines()
-    cleaned = []
-    for line in lines:
-        if line.startswith("> "):
-            cleaned.append(line[2:])
-        elif line.startswith(">"):
-            cleaned.append(line[1:])
-        else:
-            cleaned.append(line)
-    return "\n".join(cleaned)
-
-# CSS 스타일 적용
-st.markdown("""
-<style>
-    .stApp {
-        background-color: #f5f5f5;
-    }
-    .chat-message {
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin-bottom: 1rem;
-        line-height: 1.5;
-    }
-    .user-message {
-        background-color: #e3f2fd;
-        border-left: 5px solid #2196f3;
-    }
-    .bot-message {
-        background-color: #f3e5f5;
-        border-left: 5px solid #9c27b0;
-    }
-    .main-title {
-        color: #6a1b9a;
-        text-align: center;
-        padding: 2rem 0;
-        font-size: 2.5rem;
-        font-weight: bold;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
-    }
-    .description {
-        text-align: center;
-        color: #666;
-        font-size: 1.2rem;
-        margin-bottom: 2rem;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# 제목과 설명
-st.markdown('<h1 class="main-title">프롬프트 개선 테스트</h1>', unsafe_allow_html=True)
-st.markdown('<p class="description">프롬프트 개선 테스트용 페이지입니다.</p>', unsafe_allow_html=True)
-
-# Gemini API 설정
-try:
-    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-except Exception as e:
-    st.error("API 키를 설정해주세요! (.streamlit/secrets.toml 파일에 GOOGLE_API_KEY를 추가해주세요)")
-    st.stop()
-
-# 모델 설정
-model = genai.GenerativeModel('gemini-1.5-flash')
-
-# 세션 상태 초기화
-if "chat" not in st.session_state:
-    st.session_state.chat = model.start_chat(history=[])
-    st.session_state.messages = []
-    # 초기 메시지 추가
-    initial_message = "프롬프트를 입력해주세요"
-    st.session_state.messages.append({"role": "assistant", "content": initial_message})
-
-# 사용자 입력 (chat_input으로 말풍선 UX)
-user_input = st.chat_input("문제나 답변을 입력해주세요")
-
-if user_input:
-    # 새 질문이 들어오면 즉시 이전 대화/맥락 삭제 후 새 세션으로 시작
-    st.session_state.chat = model.start_chat(history=[])
-    st.session_state.messages = []
-
-    # 사용자 메시지 즉시 표시
-    with st.chat_message("user"):
-        st.markdown(user_input)
-
-    # 챗봇 프롬프트 설정
-    prompt = """
-    ## Role & Objective
+# --- 1. 시스템 프롬프트 설정 (우리가 만든 최적화 로직) ---
+SYSTEM_PROMPT = """
+## Role & Objective
 당신은 Google Gemini API 및 LLM 활용에 통달한 **'수석 프롬프트 엔지니어(Chief Prompt Engineer)'**입니다. 
-당신의 목표는 사용자가 입력한 프롬프트를 Google의 [Prompting Strategies] 가이드라인에 부합하는 **'최적화된 프롬프트'**로 재작성하는 것입니다.
+당신의 목표는 사용자의 요청을 분석하여, 상황에 맞춰 내용을 갈아 끼울 수 있는 **'최적화된 프롬프트 템플릿'**을 설계해 주는 것입니다.
 
 ## Optimization Guidelines
-1. **명확한 지시:** 모호함을 제거하고 구체적 행동을 지시합니다.
-2. **페르소나 부여:** 모델의 역할을 정의합니다.
-3. **구분자 사용:** 텍스트 간 경계를 명확히 합니다. (단, 코드 오류 방지를 위해 Backticks 대신 헤더나 특수기호를 권장합니다.)
-4. **단계적 사고:** 복잡한 작업은 단계별 추론을 유도합니다.
-5. **형식 지정:** 입력과 출력의 형식을 정의합니다.
-
-## Operational Process
-1. 사용자 입력 의도 파악
-2. 약점 진단 (모호함, 맥락 부재 등)
-3. 재작성 (Optimization Guidelines 적용)
-4. 전략 설명
+1. **변수 분리 (Variable Isolation):** 사용자의 입력이 구체적이지 않다면 절대로 임의로 내용을 채우지 말고, `# Input Data` 섹션에 변수 형태로 비워두십시오.
+2. **명확한 지시:** 모델이 수행해야 할 작업의 본질적인 논리 구조를 설계하십시오.
+3. **페르소나 부여:** 작업에 가장 적합한 전문가 페르소나를 정의하십시오.
+4. **구분자 사용:** 섹션을 명확히 구분하십시오.
 
 ## Output Format (CRITICAL)
-**중요: 답변을 출력할 때 Markdown Code Block(```)을 사용하지 마십시오.**
-대신, 최적화된 프롬프트 내용은 **인용구(Blockquote, `>`)** 형식을 사용하여 시각적으로 구분되게 출력하십시오.
+**중요: 답변 출력 시 Markdown Code Block(```)을 사용하지 말고, 인용구(>)를 사용하여 시각적으로 구분하십시오.**
+`# Input Data` 섹션은 사용자가 복사 후 내용을 채워 넣을 수 있도록 안내 문구로 작성해야 합니다.
 
 ---
 ### 🔍 분석 및 개선 포인트
-* **적용된 전략:** (전략 명시)
+* **적용된 전략:** (예: 변수 분리, 구조화 등)
 * **개선 이유:** (이유 설명)
 
 ### ✨ 최적화된 프롬프트
@@ -128,7 +30,7 @@ if user_input:
 > [배경 설명]
 >
 > # Task
-> [작업 지시]
+> [구체적인 작업 지시]
 >
 > # Constraints
 > [제약 조건]
@@ -137,41 +39,98 @@ if user_input:
 > [출력 형식]
 >
 > # Input Data
-> {{입력 데이터}}
+> - **[변수명 1]:** [입력 안내]
+> - **[변수명 2]:** [입력 안내]
 ---
-
-## Initialization
-지금부터 사용자가 입력하는 텍스트를 분석하고, 위 형식에 맞춰 코드 블록 없이 최적화된 프롬프트 내용만 반환하십시오.
-
 """
 
-    with st.spinner("생각 중..."):
+# --- 2. 페이지 기본 설정 ---
+st.set_page_config(
+    page_title="프롬프트 최적화 봇 (Gemma 3)",
+    page_icon="✨",
+    layout="wide"
+)
+
+st.title("✨ 프롬프트 엔지니어링 봇 (Powered by Groq)")
+st.markdown("대충 적은 프롬프트를 입력하면, **고성능 프롬프트 템플릿**으로 업그레이드해 드립니다.")
+
+# --- 3. 사이드바: 설정 및 API 키 입력 (BYOK 방식) ---
+with st.sidebar:
+    st.header("⚙️ 설정")
+    groq_api_key = st.text_input("Groq API Key 입력", type="password", help="[https://console.groq.com/keys](https://console.groq.com/keys) 에서 무료 발급 가능")
+    
+    # 모델 선택 (Gemma 3가 아직 목록에 없다면 gemma2-9b-it 사용 권장)
+    model_option = st.selectbox(
+        "모델 선택",
+        ("gemma2-9b-it", "llama-3.3-70b-versatile", "mixtral-8x7b-32768"),
+        index=0
+    )
+    st.info(f"선택된 모델: `{model_option}`\n\n(참고: Gemma 3가 Groq에 업데이트되면 코드 내 모델명을 변경하세요.)")
+    
+    st.markdown("---")
+    st.markdown("### 💡 사용 팁")
+    st.markdown("1. 만들고 싶은 기능을 대충 설명하세요.")
+    st.markdown("2. 예: *'블로그 글 쓰는 봇 만들어줘'*, *'영어 이메일 교정해줘'*")
+
+# --- 4. 메인 로직 ---
+
+# API 키 확인
+if not groq_api_key:
+    st.warning("왼쪽 사이드바에 **Groq API Key**를 입력해야 시작할 수 있습니다.")
+    st.stop()
+
+# 클라이언트 초기화
+try:
+    client = Groq(api_key=groq_api_key)
+except Exception as e:
+    st.error(f"API 연결 오류: {e}")
+    st.stop()
+
+# 세션 상태 초기화 (대화 기록)
+if "messages" not in st.session_state:
+    st.session_state["messages"] = [
+        {"role": "system", "content": SYSTEM_PROMPT}
+    ]
+
+# --- 5. 대화 화면 출력 ---
+# 시스템 메시지는 숨기고, 사용자/어시스턴트 대화만 표시
+for msg in st.session_state.messages:
+    if msg["role"] != "system":
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+
+# --- 6. 사용자 입력 처리 ---
+if prompt := st.chat_input("프롬프트를 입력하세요 (예: 여행 계획 짜주는 봇 만들어줘)"):
+    # 1) 사용자 메시지 UI 표시 및 저장
+    st.chat_message("user").write(prompt)
+    st.session_state.messages.append({"role": "user", "content": prompt})
+
+    # 2) Groq API 호출 및 스트리밍 응답
+    with st.chat_message("assistant"):
+        message_placeholder = st.empty()
+        full_response = ""
+        
         try:
-            # Gemini 모델에 메시지 전송
-            response = st.session_state.chat.send_message(f"{prompt}\n\n사용자: {user_input}")
-            assistant_message = response.text
-
-            # 챗봇 메시지 상태에 저장
-            st.session_state.messages.append({"role": "assistant", "content": assistant_message})
-
-            # 응답이 준비되면 새 상태로 다시 렌더링
-            st.rerun()
-
+            stream = client.chat.completions.create(
+                messages=st.session_state.messages,
+                model=model_option,
+                temperature=0.7, # 창의성 조절
+                max_tokens=2048,
+                stream=True,
+            )
+            
+            # 스트리밍 청크 받아서 실시간 출력
+            for chunk in stream:
+                if chunk.choices[0].delta.content is not None:
+                    content = chunk.choices[0].delta.content
+                    full_response += content
+                    message_placeholder.markdown(full_response + "▌")
+            
+            # 최종 완성본 출력 (커서 제거)
+            message_placeholder.markdown(full_response)
+            
+            # 3) 어시스턴트 메시지 저장
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+            
         except Exception as e:
-            st.error(f"오류가 발생했습니다: {str(e)}")
-
-# 채팅 히스토리 표시 (말풍선 형태로 교차 출력)
-for message in st.session_state.messages:
-    with st.chat_message("user" if message["role"] == "user" else "assistant"):
-        if message["role"] == "assistant":
-            marker = "### ✨ 최적화된 프롬프트"
-            if marker in message["content"]:
-                pre, post = message["content"].split(marker, 1)
-                if pre.strip():
-                    st.markdown(pre)
-                block = strip_blockquote_prefix(f"{marker}{post}")
-                st.code(block, language="markdown")
-            else:
-                st.code(strip_blockquote_prefix(message["content"]), language="markdown")
-        else:
-            st.markdown(message["content"])
+            st.error(f"에러가 발생했습니다: {e}")
